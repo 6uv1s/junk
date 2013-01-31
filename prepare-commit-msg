@@ -1,0 +1,86 @@
+#!/bin/bash
+
+echo $1
+rbval=${REVIEWEDBY}
+if test "x$rbval" = "x"; then
+  rbval=${RB}
+fi
+if test "x$rbval" = "x"; then
+  rbval=${rb}
+fi
+
+if test "x$rbval" = "x"; then
+  exit 0
+fi
+
+rbvals=$(echo ${rbval} | sed -e "s|,| |g")
+
+find_committer() {
+  rbgrep=$1
+  shift
+  filter=$@
+  if test "x${filter}" = "x"; then
+    filter="cat"
+  fi
+  git log --pretty=format:'%aN <%aE>' | grep -i "${rbgrep}[ ]*<.*$" | head -n 1
+}
+
+rbstr=
+for r in ${rbvals}; do
+ 
+  # for the string 'sam lang', first='sam', last='lang', length=4
+  first=$(echo ${r} | awk '{print $1}')
+  last=$(echo ${r} | awk '{print $2}')
+  len=$(echo ${first} | wc -c)
+  
+  # for the string 'slang' or 'sam lang', ff='s', fr='lang'
+  ff=$(echo ${first} | cut -c 1)
+  if test "x${last}" = "x"; then
+    fr=$(echo ${first} | tail -c $[ ${len} - 1 ])
+  else
+    fr=${last}
+  fi
+  
+  # for the string 'saml', rf='sam', rr='l'
+  if test "x${last}" = "x"; then
+    rf=$(echo ${first} | head -c $[ ${len} - 2 ])
+    rr=$(echo ${first} | tail -c 2)
+  else
+    rf=${first}
+    rr=$(echo ${last} | cut -c 1)
+  fi
+  
+  # look for actual string
+  r=$(echo ${r} | sed -e "s| |.|g")
+  found=$(find_committer "${r}")
+  
+  # look for first[ \.]*last
+  if test "x${found}" = "x"; then
+    found=$(find_committer "${first}[ \.]*${last}")
+  fi
+  
+  # if not found, look for ${ff}.*${fr}, e.g. s.*lang 
+  if test "x${found}" = "x"; then
+    found=$(find_committer "${ff}.*${fr}.*")
+  fi
+  
+  # if not found, look for ${rf}[ ]*${rr}.*, e.g. sam[ ]*l.*
+  if test "x${found}" = "x"; then
+    found=$(find_committer "${rf}[ ]*${rr}.*")
+  fi
+  
+  if test "x${found}" = "x"; then
+    echo "Failed to find match for Reviewed-by: ${r}" >&2
+    exit 1
+  fi
+  
+  # make sure this reviewer isn't already listed
+  grep -qs "Reviewed-by: ${found}" "$1" >/dev/null 2>/dev/null
+  if test $? != 0; then
+    f=$(echo ${found} | sed -e "s|@|\\\\@|")
+    rbstr="${rbstr}Reviewed-by: ${f}\n"
+  fi
+done
+
+# insert the found Reviewed-bys after the last Signed-off-by
+grep -qs "^${rbstr}" "$1" || perl -i.bak -pe "BEGIN{undef \$/;} s/(Signed-off-by:.*>\n)/\$1${rbstr}/smg" "$1"
