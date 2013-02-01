@@ -1,0 +1,26 @@
+#!/bin/bash
+
+if test $# -lt 2; then
+	echo "usage: ${0} [options] <reviewer> <rev-list>"
+	exit 1
+fi
+
+n=$[$#-2]
+options=
+for i in $(seq 1 ${n}); do
+	arg=$(eval "echo \$${i}")
+	options="${options} ${arg}"
+done
+
+r=$[$n+1]
+reviewer=$(eval "echo \$${r}")
+c=$[$r+1]
+commits=$(eval "echo \$${c}")
+
+before=$(tempfile)
+git log ${commits} > ${before}
+rb=${reviewer} git filter-branch ${options} --msg-filter ../../.git/hooks/prepare-commit-msg ${commits}
+after=$(tempfile)
+git log ${commits} > ${after}
+diff -N -a -U 5 ${before} ${after}
+rm ${before} ${after}
